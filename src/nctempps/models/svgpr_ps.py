@@ -7,8 +7,12 @@ Date: 02/27/2025
 
 import torch
 import gpytorch
+import geopandas as gpd
+from shapely.geometry import Point
 import pyro
+import numpy as np
 import pyro.distributions as dist
+from sklearn.cluster import KMeans
 
 
 def _clamp_sigma(sigma, floor=1e-3, ceil=None):
@@ -65,7 +69,6 @@ class SVGPR_PS_BASE_NEW(gpytorch.models.ApproximateGP):
 
         super().__init__(variational_strategy=variational_strategy)
 
-        # Defining the mean and covariance modules:
         self.mean_module = gpytorch.means.ZeroMean()
         self.covar_module = gpytorch.kernels.ScaleKernel(
             gpytorch.kernels.MaternKernel(
@@ -76,7 +79,7 @@ class SVGPR_PS_BASE_NEW(gpytorch.models.ApproximateGP):
 
         self.covar_module.base_kernel.initialize(lengthscale=1.0)
         self.covar_module.outputscale = 1.551062822341919
-        self.likelihood_noise = 1e-4
+        self.likelihood_noise = 1e-4 
 
     def forward(self, x):
         """The standard forward pass for GPs"""
@@ -98,7 +101,7 @@ class SVGPR_PS_MLE_NEW(SVGPR_PS_BASE_NEW):
     parameters (i.e. we are not learning a distribution over the parameters).
     """
 
-    def model(self, points, inducing_points, quadrature_points, y, sigma, pop_dens_points, pop_dens_quad):
+    def model(self, points, inducing_points, quadrature_points, y, sigma, pop_dens_points, pop_dens_quad, counts_points): # sigma input = per-unit std from kriged variance
         """
         A simple model with parameters to learn (and no priors).
         """
@@ -143,6 +146,7 @@ class SVGPR_PS_MLE_NEW(SVGPR_PS_BASE_NEW):
 
         pop_dens_points = pop_dens_points.to(device=points.device, dtype=points.dtype)
         pop_dens_quad   = pop_dens_quad.to(device=points.device, dtype=points.dtype)
+        counts_points = counts_points.to(device=points.device, dtype=points.dtype)
 
         log_p_points = torch.log(pop_dens_points + eps)
         log_p_quad   = torch.log(pop_dens_quad   + eps)
@@ -150,15 +154,12 @@ class SVGPR_PS_MLE_NEW(SVGPR_PS_BASE_NEW):
         log_lambda_points = alpha0 + alpha1 * f_points + log_p_points
         log_lambda_quad   = alpha0 + alpha1 * f_quad   + log_p_quad
 
-        arrival_intensity_samples = torch.exp(log_lambda_points)
         quad_intensity_samples    = torch.exp(log_lambda_quad)
 
-        # Compute the poisson log_likelihood
-        arrival_log_intensities = arrival_intensity_samples.log().sum(dim=-1)
+        arrival_log_intensities = (counts_points * log_lambda_points).sum(dim=-1)
         est_num_arrivals = self.est_num_arrivals(quad_intensity_samples)
         log_likelihood = arrival_log_intensities - est_num_arrivals
         
-        # Define the Poisson process likelihood
         pyro.factor(self.name_prefix + ".log_likelihood", self.ps_scale * log_likelihood)
 
     def est_num_arrivals(self, quad_intensity_samples):
@@ -170,8 +171,7 @@ class SVGPR_PS_MLE_NEW(SVGPR_PS_BASE_NEW):
             raise ValueError("area is None; override est_num_arrivals in subclass.")
         return quad_intensity_samples.mean(dim=-1) * self.area[0] * self.area[1]
     
-    def guide(self, points, inducing_points, quadrature_points, y, sigma, pop_dens_points, pop_dens_quad):
-
+    def guide(self, points, inducing_points, quadrature_points, y, sigma, pop_dens_points, pop_dens_quad, counts_points):
         alpha1_loc = pyro.param(self.name_prefix + ".alpha1_loc", torch.tensor(-0.5))
         alpha1_scale = pyro.param(
             self.name_prefix + ".alpha1_scale",
@@ -234,6 +234,7 @@ class SVGPR_PS_BLOCKS_NEW(SVGPR_PS_MLE_NEW):
             learn_inducing_locations=learn_inducing_locations,
             mean_temp=mean_temp,
         )
+
         self.total_area = torch.tensor(df["ALAND"].sum(), dtype=torch.float32)
 
     def est_num_arrivals(self, quad_intensity_samples):
