@@ -1,0 +1,19 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+
+# Packaging
+*.egg-info/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# vscode
+.vscode/
+
+notebooks/
+experiments/
+data/
+configs/
+
+venv/

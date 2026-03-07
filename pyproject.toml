@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nctempps"
+version = "0.0.1"
+readme = "README.md"
+
+[project.urls]
+Repository = "https://github.com/elliekkim/nc_temp_ps"
